@@ -1,21 +1,24 @@
 import os
 from typing import List, Dict, Any
 from groq import Groq
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 from embed import embed_query
-from vector_db import search
+from vector_database import search
+
+from dotenv import load_dotenv
+load_dotenv()   # thêm dòng này trước các os.getenv(...)
 
 # ── Cấu hình ──────────────────────────────────────────────────────────────────
-GROQ_API_KEY   = os.getenv("GROQ_API_KEY", "")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 groq_client = Groq(api_key=GROQ_API_KEY)
-genai.configure(api_key=GEMINI_API_KEY)
 
-GROQ_MODEL   = "llama-3.3-70b-versatile"
+GROQ_MODEL = "llama-3.3-70b-versatile"
 GEMINI_MODEL = "gemini-1.5-flash"
-TOP_K        = 5
+TOP_K = 5
 
 SYSTEM_PROMPT = """Bạn là trợ lý hỏi đáp chuyên về An toàn và Bảo mật Hệ thống Thông tin.
 Chỉ trả lời dựa trên ngữ cảnh được cung cấp. Nếu ngữ cảnh không đủ thông tin, hãy nói rõ điều đó.
@@ -42,17 +45,19 @@ def ask_groq(messages: List[Dict]) -> str:
 
 
 def ask_gemini(messages: List[Dict]) -> str:
-    """Fallback khi Groq lỗi/hết quota."""
-    model = genai.GenerativeModel(GEMINI_MODEL)
-    # Ghép messages thành prompt đơn giản
+    client = genai.Client(api_key=GEMINI_API_KEY)
     prompt = "\n\n".join(
         f"{'User' if m['role']=='user' else 'Assistant'}: {m['content']}"
         for m in messages
         if m["role"] != "system"
     )
-    response = model.generate_content(
-        f"{SYSTEM_PROMPT}\n\n{prompt}",
-        generation_config={"temperature": 0.2, "max_output_tokens": 1024},
+    response = client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=f"{SYSTEM_PROMPT}\n\n{prompt}",
+        config=types.GenerateContentConfig(
+            temperature=0.2,
+            max_output_tokens=1024,
+        ),
     )
     return response.text
 
@@ -69,13 +74,13 @@ def answer(query: str, chat_history: List[Dict] = None) -> Dict[str, Any]:
         chat_history = []
 
     # 1. Retrieve
-    query_vec  = embed_query(query)
-    retrieved  = search(query_vec, top_k=TOP_K, score_threshold=0.35)
+    query_vec = embed_query(query)
+    retrieved = search(query_vec, top_k=TOP_K, score_threshold=0.35)
 
     if not retrieved:
         return {
-            "answer":    "Không tìm thấy thông tin liên quan trong tài liệu.",
-            "sources":   [],
+            "answer": "Không tìm thấy thông tin liên quan trong tài liệu.",
+            "sources": [],
             "model_used": None,
         }
 
@@ -87,7 +92,7 @@ def answer(query: str, chat_history: List[Dict] = None) -> Dict[str, Any]:
 Câu hỏi: {query}"""
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    messages.extend(chat_history[-6:])   # giữ 3 lượt gần nhất
+    messages.extend(chat_history[-6:])  # giữ 3 lượt gần nhất
     messages.append({"role": "user", "content": user_msg})
 
     # 3. Generate với fallback
@@ -97,13 +102,13 @@ Câu hỏi: {query}"""
     except Exception as e:
         print(f"⚠️  Groq lỗi ({e}), fallback sang Gemini...")
         answer_text = ask_gemini(messages)
-        model_used  = GEMINI_MODEL
+        model_used = GEMINI_MODEL
 
     sources = [{"page": r["page"], "score": round(r["score"], 3)} for r in retrieved]
 
     return {
-        "answer":     answer_text,
-        "sources":    sources,
+        "answer": answer_text,
+        "sources": sources,
         "model_used": model_used,
     }
 
@@ -128,5 +133,5 @@ if __name__ == "__main__":
         print("-" * 60)
 
         # Cập nhật history (chỉ giữ nội dung câu hỏi gốc, không kèm context)
-        history.append({"role": "user",      "content": query})
+        history.append({"role": "user", "content": query})
         history.append({"role": "assistant", "content": result["answer"]})
