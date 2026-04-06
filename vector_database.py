@@ -4,8 +4,7 @@ from typing import List, Dict, Any
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
     Distance, VectorParams, PointStruct,
-    Filter, FieldCondition, MatchValue,
-    SearchRequest,
+  
 )
 
 # ── Cấu hình ──────────────────────────────────────────────────────────────────
@@ -95,11 +94,12 @@ def search(
 
 
 def get_collection_info() -> Dict:
+    """Dùng points_count thay vì get_collection để tránh version mismatch."""
     client = get_client()
-    info = client.get_collection(COLLECTION)
+    result = client.count(collection_name=COLLECTION)
     return {
-        "vectors_count": info.vectors_count,
-        "status":        info.status,
+        "vectors_count": result.count,
+        "status": "ok",
     }
 
 
@@ -108,7 +108,7 @@ if __name__ == "__main__":
     from chunking import chunk_documents
     from embed import embed_chunks
 
-    pdf_path = "documents\ATBM HTTT - Hoàng Xuân Dậu.pdf"
+    pdf_path = "documents\TOYOTA.pdf"
     docs   = extract_pdf_with_metadata(pdf_path)
     chunks = chunk_documents(docs)
     chunks = embed_chunks(chunks)

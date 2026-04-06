@@ -66,7 +66,7 @@ if __name__ == "__main__":
     from data_processing.extract_pdf import extract_pdf_with_metadata
     from chunking import chunk_documents
 
-    pdf_path = "documents\ATBM HTTT - Hoàng Xuân Dậu.pdf"
+    pdf_path = "documents\TOYOTA.pdf"
     docs = extract_pdf_with_metadata(pdf_path)
     chunks = chunk_documents(docs)
     chunks = embed_chunks(chunks)
