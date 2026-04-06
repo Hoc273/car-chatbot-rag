@@ -41,17 +41,8 @@ Dữ liệu Qdrant sẽ được lưu trong thư mục `qdrant_storage` trong re
 
 ## Chạy ứng dụng
 
-Lưu ý: file `main.py` trong repo hiện trống; tùy thuộc vào cách bạn triển khai, có một số cách khởi chạy:
-
-- Nếu bạn phát triển API với FastAPI, khởi động bằng Uvicorn:
-
-	uvicorn main:app --reload
-
-- Nếu bạn có một script chính để chạy (ví dụ `rag.py`), chạy trực tiếp:
-
-	python rag.py
-
-Thay `main:app` hoặc `rag.py` bằng điểm vào thực tế của dự án khi bạn đã triển khai entrypoint.
+Vào venv:
+- Chạy python chungking.py -> embed.py -> vector_database.py -> rag.py
 
 ## Cấu trúc chính
 
