@@ -8,7 +8,7 @@ Slots:
     purpose         : mục đích sử dụng (str)
     fuel            : nhiên liệu — xăng | dầu | hybrid | điện (str)
     region          : khu vực đi lại — thành phố | đường dài | địa hình | hỗn hợp (str)
-    brand_preference: hãng xe ưa thích — toyota | không quan trọng (str)
+    type_car           : loại xe — sedan | SUV | Đa dụng | Bán Tải | hatchback (str)
 """
 
 import json
@@ -56,11 +56,11 @@ SLOT_SCHEMA = {
         "description": "Khu vực / địa hình sử dụng chính",
         "example": "thành phố",
     },
-    "brand_preference": {
+    "type_car": {
         "type": "str",
-        "enum": ["toyota", "không quan trọng"],
-        "description": "Hãng xe ưa thích",
-        "example": "toyota",
+        "enum": ["sedan", "SUV", "đa dụng", "bán tải", "hatchback"],
+        "description": "Loại xe mong muốn",
+        "example": "SUV",
     },
 }
 
@@ -73,7 +73,7 @@ Nhiệm vụ: đọc câu của người dùng và trích xuất các slot sau:
 - purpose         : một trong [gia đình, kinh doanh, cá nhân, off-road, chạy dịch vụ, hỗn hợp]
 - fuel            : một trong [xăng, dầu, hybrid, điện]
 - region          : một trong [thành phố, đường dài, địa hình, hỗn hợp]
-- brand_preference: một trong [toyota, không quan trọng]
+- type_car        : một trong [sedan, SUV, đa dụng, bán tải, hatchback]
 
 Ngoài ra, hãy xác định 2 field đặc biệt:
 
@@ -107,7 +107,7 @@ Quy tắc:
   "purpose": <str|null>,
   "fuel": <str|null>,
   "region": <str|null>,
-  "brand_preference": <str|null>,
+  "type_car": <str|null>,
   "overrides": <list[str]>,
   "clears": <list[str]>
 }
@@ -161,7 +161,7 @@ def _regex_fallback(text: str) -> Dict[str, Any]:
         "purpose":          None,
         "fuel":             _regex_extract_fuel(text),
         "region":           _regex_extract_region(text),
-        "brand_preference": None,
+        "type_car":         None,
         "overrides":        [],
         "clears":           [],   # regex không detect được intent xoá
     }

@@ -79,7 +79,7 @@ def _extract_budget(query: str) -> Optional[float]:
 def _extract_seats(query: str) -> Optional[int]:
     """
     Trích xuất số chỗ ngồi từ query.
-    Hỗ trợ: '7 chỗ', '5 chỗ ngồi'
+    Hỗ trợ: '7 chỗ', '5 chỗ ngồi', '4 chỗ ngồi' 
     """
     m = re.search(r'(\d+)\s*chỗ', query.lower())
     if m:

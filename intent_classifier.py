@@ -93,16 +93,3 @@ def classify_intent(query: str) -> Dict:
         }
 
 
-# ── Test nhanh ────────────────────────────────────────────────────────────────
-if __name__ == "__main__":
-    tests = [
-        "Xin chào bạn ơi!",
-        "Tôi muốn mua xe 7 chỗ khoảng 1 tỷ",
-        "Toyota Fortuner có mấy phiên bản?",
-        "Hôm nay thời tiết thế nào?",
-        "Cho tôi xem mấy con xe chạy dầu",
-    ]
-    for q in tests:
-        r = classify_intent(q)
-        print(f"Q: {q}")
-        print(f"→ {r}\n")

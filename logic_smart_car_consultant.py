@@ -17,7 +17,7 @@ SLOT_DISPLAY = {
     "purpose":          "mục đích sử dụng",
     "fuel":             "loại nhiên liệu",
     "region":           "khu vực đi lại",
-    "brand_preference": "hãng xe ưa thích",
+    "type_car":         "loại xe ưa thích",
 }
 
 # Câu hỏi gợi ý cho từng slot còn thiếu
@@ -27,11 +27,11 @@ SLOT_QUESTIONS = {
     "purpose":  "Xe chủ yếu dùng cho mục đích gì ạ? (gia đình, kinh doanh, cá nhân, off-road...)",
     "fuel":     "Anh/chị có ưu tiên loại nhiên liệu nào không? (xăng, dầu, hybrid, điện)",
     "region":   "Xe chủ yếu chạy ở đâu ạ? (thành phố, đường dài, địa hình khó...)",
-    "brand_preference": "Anh/chị có muốn xe Toyota cụ thể hay chỉ cần phù hợp nhu cầu?",
+    "type_car": "Anh/chị muốn xe loại nào? (sedan, SUV, đa dụng, bán tải, hatchback)",
 }
 
 # Slot ưu tiên hỏi trước (theo thứ tự quan trọng)
-SLOT_PRIORITY = ["budget", "seats", "purpose", "fuel", "region", "brand_preference"]
+SLOT_PRIORITY = ["budget", "seats", "purpose", "fuel", "region", "type_car"]
 
 # Số slot tối thiểu để tư vấn ngay
 MIN_SLOTS_TO_ADVISE = 1
@@ -52,7 +52,7 @@ def build_slot_context(slots: Dict[str, Any]) -> str:
         "purpose":          lambda v: f"  • Mục đích sử dụng: {v}",
         "fuel":             lambda v: f"  • Nhiên liệu ưa thích: {v}",
         "region":           lambda v: f"  • Khu vực đi lại: {v}",
-        "brand_preference": lambda v: f"  • Hãng xe: {v}",
+        "type_car":         lambda v: f"  • Loại xe: {v}",
     }
     for key in SLOT_PRIORITY:
         if key in filled:
