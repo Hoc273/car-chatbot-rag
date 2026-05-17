@@ -227,14 +227,6 @@ def extract_slots(text: str) -> Dict[str, Any]:
 
 
 def merge_slots(existing: Dict[str, Any], new: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Merge slots mới vào slots đã có.
-
-    Logic:
-    - Slot trong `clears`    → set về None (xoá yêu cầu)
-    - Slot trong `overrides` → ghi đè bằng giá trị mới
-    - Slot còn lại           → chỉ fill nếu hiện tại là None
-    """
     merged    = dict(existing)
     overrides = new.get("overrides", []) or []
     clears    = new.get("clears",    []) or []
@@ -244,7 +236,13 @@ def merge_slots(existing: Dict[str, Any], new: Dict[str, Any]) -> Dict[str, Any]
         if key in SLOT_SCHEMA:
             merged[key] = None
 
-    # Bước 2: merge slot mới
+    # Bước 2: nếu chỉ có đúng 1 slot được extract và không có slot nào khác
+    # → coi như user đang chỉnh slot đó (implicit override)
+    filled_new = [k for k in SLOT_SCHEMA if new.get(k) is not None]
+    if len(filled_new) == 1 and filled_new[0] not in overrides:
+        overrides = overrides + filled_new  # ← tự động override slot duy nhất
+
+    # Bước 3: merge slot mới
     for key in SLOT_SCHEMA:
         val = new.get(key)
         if val is None:
@@ -253,7 +251,6 @@ def merge_slots(existing: Dict[str, Any], new: Dict[str, Any]) -> Dict[str, Any]
             merged[key] = val
 
     return merged
-
 
 def empty_slots() -> Dict[str, Any]:
     """Trả về dict slots rỗng (tất cả None)."""

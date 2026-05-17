@@ -76,30 +76,22 @@ def build_followup_question(missing: List[str], turn_count: int) -> Optional[str
 
     return None
 
-
 def build_advise_prompt(
     query: str,
     state: ConversationState,
     context: str,
 ) -> str:
-    """
-    Xây dựng user message đưa vào LLM để tư vấn.
-    Gộp: slot summary + RAG context + lịch sử + câu hỏi.
-    """
     slot_ctx = build_slot_context(state.slots)
-    history  = state.get_history_text(n_turns=3)
 
     parts = []
 
     if slot_ctx:
         parts.append(slot_ctx)
 
-    if history:
-        parts.append(f"📝 Lịch sử hội thoại gần đây:\n{history}")
-
     if context:
         parts.append(f"📚 Ngữ cảnh từ tài liệu:\n{context}")
 
+    # KHÔNG thêm history ở đây — rag.py đã inject vào messages rồi
     parts.append(f"❓ Câu hỏi hiện tại: {query}")
 
     return "\n\n---\n\n".join(parts)

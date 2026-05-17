@@ -35,19 +35,20 @@ from conversation_state_manager import state_manager, ConversationState
 from logic_smart_car_consultant import smart_consultant
 
 from dotenv import load_dotenv
+
 load_dotenv()
 
 # ── Cấu hình ──────────────────────────────────────────────────────────────────
-GROQ_API_KEY   = os.getenv("GROQ_API_KEY",   "")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 # Chọn provider: groq | ollama | gemini | auto
-LLM_PROVIDER   = os.getenv("LLM_PROVIDER", "auto").lower()
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "auto").lower()
 
-GROQ_MODEL     = os.getenv("GROQ_MODEL",   "llama-3.3-70b-versatile")
-GEMINI_MODEL   = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
-OLLAMA_MODEL   = os.getenv("OLLAMA_MODEL", "gemma4:e2b")
-OLLAMA_URL     = os.getenv("OLLAMA_URL",   "http://localhost:11434/api/chat")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma4:e2b")
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434/api/chat")
 
 TOP_K = 5
 
@@ -67,14 +68,18 @@ Nhiệm vụ:
 - Tư vấn xe Toyota phù hợp với nhu cầu người dùng
 - Trả lời dựa trên ngữ cảnh tài liệu và thông tin khách hàng đã cung cấp
 - Không bịa giá, thông số, phiên bản, chỉ dựa trên dữ liệu đã có
-- Nếu không đủ thông tin, hãy hỏi thêm người dùng (ưu tiên slot quan trọng trước)
-
+- Nếu không đủ thông tin, hãy tư vấn với thông tin đang có
 
 Khi tư vấn, trình bày theo cấu trúc:
 1. Nhận định nhu cầu (dựa trên thông tin đã thu thập)
 2. Gợi ý xe phù hợp
 3. Lý do chọn
 4. Gợi ý thêm nếu có
+
+QUAN TRỌNG:
+- KHÔNG tự đặt câu hỏi hỏi thêm người dùng ở cuối response
+- KHÔNG hỏi về ngân sách, số chỗ, mục đích hay bất kỳ thông tin nào
+- Hệ thống sẽ tự động hỏi follow-up — bạn chỉ cần tư vấn
 
 Luôn trả lời bằng tiếng Việt. Giọng văn: chuyên nghiệp, thân thiện.
 """.strip()
@@ -97,7 +102,11 @@ def _resolve_ollama_model(preferred_model: str) -> str:
     except Exception:
         return preferred_model
 
-    models = [m.get("name") for m in data.get("models", []) if isinstance(m, dict) and m.get("name")]
+    models = [
+        m.get("name")
+        for m in data.get("models", [])
+        if isinstance(m, dict) and m.get("name")
+    ]
     if not models:
         return preferred_model
 
@@ -105,11 +114,14 @@ def _resolve_ollama_model(preferred_model: str) -> str:
         return preferred_model
 
     fallback_model = models[0]
-    print(f"⚠️ Ollama model '{preferred_model}' not found, using '{fallback_model}' instead")
+    print(
+        f"⚠️ Ollama model '{preferred_model}' not found, using '{fallback_model}' instead"
+    )
     return fallback_model
 
 
 # ── LLM helpers ───────────────────────────────────────────────────────────────
+
 
 def _ask_groq(messages: List[Dict]) -> str:
     if not groq_client:
@@ -138,13 +150,13 @@ def _ask_ollama(messages: List[Dict]) -> str:
     model_name = _resolve_ollama_model(OLLAMA_MODEL)
 
     payload = {
-        "model":   model_name,
+        "model": model_name,
         "messages": full_messages,
-        "stream":  False,
+        "stream": False,
         "options": {
             "temperature": 0.2,
             "num_predict": 1024,
-            "num_ctx":     4096,   # giới hạn context để tiết kiệm RAM
+            "num_ctx": 4096,  # giới hạn context để tiết kiệm RAM
         },
     }
     try:
@@ -180,7 +192,11 @@ def _ask_ollama(messages: List[Dict]) -> str:
         return resp.text
 
     if isinstance(j, dict):
-        if "message" in j and isinstance(j["message"], dict) and "content" in j["message"]:
+        if (
+            "message" in j
+            and isinstance(j["message"], dict)
+            and "content" in j["message"]
+        ):
             return j["message"]["content"]
         if "text" in j:
             return j["text"]
@@ -263,9 +279,10 @@ def _build_context(retrieved: List[Dict[str, Any]]) -> str:
 
 # ── Pipeline chính ────────────────────────────────────────────────────────────
 
+
 def answer(
-    query:        str,
-    session_id:   str = "default",
+    query: str,
+    session_id: str = "default",
 ) -> Dict[str, Any]:
 
     # ── Lấy / tạo conversation state ─────────────────────────────────────────
@@ -273,7 +290,7 @@ def answer(
 
     # ── Bước 1: Classify intent ───────────────────────────────────────────────
     intent_result = classify_intent(query)
-    intent        = intent_result["intent"]
+    intent = intent_result["intent"]
     print(f"🔍 Intent: {intent} | confidence: {intent_result.get('confidence', '?')}")
 
     # ── Bước 2: Business rules ────────────────────────────────────────────────
@@ -283,13 +300,13 @@ def answer(
         print(f"🚫 Blocked: {rule_name}")
         state.add_turn(query, rule_response)
         return _make_result(
-            answer     = rule_response,
-            sources    = [],
-            model_used = "business_rules",
-            intent     = intent,
-            rule_name  = rule_name,
-            state      = state,
-            session_id = session_id,
+            answer=rule_response,
+            sources=[],
+            model_used="business_rules",
+            intent=intent,
+            rule_name=rule_name,
+            state=state,
+            session_id=session_id,
         )
 
     warning_prefix = f"{rule_response}\n\n---\n\n" if rule_response else ""
@@ -305,30 +322,44 @@ def answer(
     prelim_decision = smart_consultant.decide(query, state, rag_context="")
 
     # ── Bước 5: RAG retrieve ──────────────────────────────────────────────────
-    sources     = []
+    sources = []
     rag_context = ""
 
+    # Bước 5: RAG retrieve
+
+
     if not prelim_decision.skip_rag:
+        # Tăng top_k khi hỏi liệt kê
+        list_keywords = ["tất cả", "những xe", "có những", "danh sách", "các xe", "nêu"]
+        dynamic_top_k = 15 if any(kw in query.lower() for kw in list_keywords) else TOP_K
+
         query_vec = embed_query(query)
-        retrieved = search(query_vec, top_k=TOP_K, score_threshold=0.35)
+        retrieved = search(query_vec, top_k=dynamic_top_k, score_threshold=0.35)
         if not retrieved:
-            retrieved = search(query_vec, top_k=TOP_K, score_threshold=0.2)
+            retrieved = search(query_vec, top_k=dynamic_top_k, score_threshold=0.2)
 
         if retrieved:
             rag_context = _build_context(retrieved)
-            sources     = [{"page": r["page"], "score": round(r["score"], 3)} for r in retrieved]
+            sources = [
+                {"page": r["page"], "score": round(r["score"], 3)} for r in retrieved
+            ]
         else:
-            no_data   = warning_prefix + "Tôi chưa có thông tin chính xác về nội dung này trong dữ liệu hiện tại."
-            final_msg = smart_consultant.compose_final_response(no_data, prelim_decision)
+            no_data = (
+                warning_prefix
+                + "Tôi chưa có thông tin chính xác về nội dung này trong dữ liệu hiện tại."
+            )
+            final_msg = smart_consultant.compose_final_response(
+                no_data, prelim_decision
+            )
             state.add_turn(query, final_msg)
             return _make_result(
-                answer     = final_msg,
-                sources    = [],
-                model_used = "none",
-                intent     = intent,
-                rule_name  = rule_name,
-                state      = state,
-                session_id = session_id,
+                answer=final_msg,
+                sources=[],
+                model_used="none",
+                intent=intent,
+                rule_name=rule_name,
+                state=state,
+                session_id=session_id,
             )
 
     # ── Bước 6: Build prompt cuối với RAG context đầy đủ ─────────────────────
@@ -357,40 +388,41 @@ def answer(
     state.add_turn(query, final_answer)
 
     return _make_result(
-        answer     = final_answer,
-        sources    = sources,
-        model_used = model_used,
-        intent     = intent,
-        rule_name  = rule_name,
-        state      = state,
-        session_id = session_id,
+        answer=final_answer,
+        sources=sources,
+        model_used=model_used,
+        intent=intent,
+        rule_name=rule_name,
+        state=state,
+        session_id=session_id,
     )
 
 
 def _make_result(
-    answer:     str,
-    sources:    list,
+    answer: str,
+    sources: list,
     model_used: str,
-    intent:     str,
-    rule_name:  str,
-    state:      ConversationState,
+    intent: str,
+    rule_name: str,
+    state: ConversationState,
     session_id: str,
 ) -> Dict[str, Any]:
     return {
-        "answer":          answer,
-        "sources":         sources,
-        "model_used":      model_used,
-        "intent":          intent,
-        "rule_triggered":  rule_name,
-        "stage":           state.stage,
-        "slots":           state.get_filled_slots(),
-        "session_id":      session_id,
+        "answer": answer,
+        "sources": sources,
+        "model_used": model_used,
+        "intent": intent,
+        "rule_triggered": rule_name,
+        "stage": state.stage,
+        "slots": state.get_filled_slots(),
+        "session_id": session_id,
     }
 
 
 # ── CLI loop ──────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import uuid
+
     SESSION_ID = str(uuid.uuid4())
     print(f"🤖 Toyota RAG Chatbot  |  session: {SESSION_ID}")
     print(f"🧠 LLM provider: {LLM_PROVIDER.upper()}", end="")
@@ -420,7 +452,9 @@ if __name__ == "__main__":
             continue
 
         result = answer(query, session_id=SESSION_ID)
-        print(f"\n🤖 ({result['model_used']}) [intent={result['intent']} | stage={result['stage']}]:")
+        print(
+            f"\n🤖 ({result['model_used']}) [intent={result['intent']} | stage={result['stage']}]:"
+        )
         print(result["answer"])
         print(f"\n📦 Slots : {result['slots']}")
         print(f"📚 Nguồn : {result['sources']}")
