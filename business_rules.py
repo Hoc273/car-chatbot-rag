@@ -146,24 +146,3 @@ class BusinessRules:
 rules_engine = BusinessRules()
 
 
-# ── Test nhanh ────────────────────────────────────────────────────────────────
-if __name__ == "__main__":
-    from intent_classifier import classify_intent
-
-    tests = [
-        "Tôi muốn mua xe 7 chỗ khoảng 1 tỷ 2",
-        "Cho tôi xe 3 chỗ",
-        "Ngân sách 50 triệu mua được xe không?",
-        "Hôm nay thời tiết thế nào?",
-        "Tôi muốn xe 5 chỗ khoảng 800 triệu",
-    ]
-
-    for q in tests:
-        intent = classify_intent(q)
-        blocked, rule, response = rules_engine.check(q, intent)
-        status = "🚫 BLOCKED" if blocked else "✅ PASS"
-        print(f"Q: {q}")
-        print(f"→ Intent: {intent['intent']} | Rule: {rule} | {status}")
-        if response:
-            print(f"→ Response: {response}")
-        print()

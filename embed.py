@@ -60,19 +60,3 @@ def embed_chunks(chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
     print(f"✅ Đã embed xong {len(chunks)} chunks")
     return chunks
-
-
-if __name__ == "__main__":
-    from data_processing.extract_pdf import extract_multiple_pdfs  # ← đổi
-    from chunking import chunk_documents
-
-    docs = extract_multiple_pdfs()  # ← tự động đọc documents/, chỉ file mới
-
-    if not docs:
-        print("[INFO] Không có file mới để embed.")
-    else:
-        chunks = chunk_documents(docs)
-        chunks = embed_chunks(chunks)
-
-        print(f"\nSample vector (first 5 dims): {chunks[0]['embedding'][:5]}")
-        print(f"Vector dim: {len(chunks[0]['embedding'])}")

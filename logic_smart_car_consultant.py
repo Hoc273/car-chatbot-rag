@@ -5,8 +5,9 @@ Logic tư vấn xe thông minh — quyết định cách trả lời dựa trên
 Chiến lược: Tư vấn ngay với thông tin đã có, hỏi thêm sau.
 """
 
-from typing import Dict, Any, List, Optional, Tuple
-from conversation_state_manager import ConversationState, STAGE_COLLECTING, STAGE_ADVISING
+from typing import Dict, Any, List, Optional
+from conversation_state_manager import ConversationState
+from slot_extractor import should_extract_slots
 
 # ── Cấu hình ──────────────────────────────────────────────────────────────────
 
@@ -80,8 +81,9 @@ def build_advise_prompt(
     query: str,
     state: ConversationState,
     context: str,
+    use_slot_context: bool = True,
 ) -> str:
-    slot_ctx = build_slot_context(state.slots)
+    slot_ctx = build_slot_context(state.slots) if use_slot_context else ""
 
     parts = []
 
@@ -145,8 +147,18 @@ class SmartCarConsultant:
             )
 
         # ── Collecting + Advising: tư vấn ngay với info đã có ────────────────
-        prompt   = build_advise_prompt(query, state, rag_context)
-        followup = build_followup_question(missing, state.turn_count)
+        use_slot_context = should_extract_slots(state.last_intent or "")
+        prompt   = build_advise_prompt(
+            query,
+            state,
+            rag_context,
+            use_slot_context=use_slot_context,
+        )
+        followup = (
+            build_followup_question(missing, state.turn_count)
+            if use_slot_context
+            else None
+        )
 
         return ConsultDecision(
             prompt   = prompt,
@@ -177,21 +189,6 @@ class SmartCarConsultant:
             return f"{llm_response}\n\n---\n💬 {decision.followup}"
         return llm_response
 
-    # ── Slot adequacy check ───────────────────────────────────────────────────
-
-    def needs_more_info(self, state: ConversationState) -> bool:
-        """True nếu chưa có đủ thông tin tư vấn."""
-        return not state.has_enough_info()
-
-    def get_slot_summary_for_user(self, state: ConversationState) -> str:
-        """Tóm tắt ngắn gọn những gì đã biết — dùng khi cần confirm lại."""
-        filled = state.get_filled_slots()
-        if not filled:
-            return "Tôi chưa có thông tin nào về nhu cầu của anh/chị."
-        parts = [f"{SLOT_DISPLAY.get(k, k)}: {v}" for k, v in filled.items()]
-        return "Thông tin tôi đã ghi nhận: " + ", ".join(parts) + "."
-
-
 # ── Data class cho decision ───────────────────────────────────────────────────
 
 class ConsultDecision:
@@ -217,32 +214,3 @@ class ConsultDecision:
 
 # Singleton
 smart_consultant = SmartCarConsultant()
-
-
-# ── Test ──────────────────────────────────────────────────────────────────────
-if __name__ == "__main__":
-    from conversation_state_manager import ConversationStateManager
-    from slot_extractor import extract_slots
-
-    mgr   = ConversationStateManager()
-    state = mgr.create("test-001")
-
-    turns = [
-        ("Xin chào!", "greeting"),
-        ("Tôi muốn mua xe gia đình, ngân sách 1 tỷ", "car_advice"),
-        ("Cần 7 chỗ, chạy trong thành phố", "usage_filter"),
-    ]
-
-    for query, intent in turns:
-        slots = extract_slots(query)
-        state.update_slots(slots)
-        state.update_stage(intent)
-
-        decision = smart_consultant.decide(query, state, rag_context="[mock context]")
-        print(f"Turn {state.turn_count + 1} | Stage: {decision.stage}")
-        print(f"Decision: {decision}")
-        print(f"Prompt preview: {decision.prompt[:80]}...")
-        print(f"Follow-up: {decision.followup}")
-        print()
-
-        state.add_turn(query, "[mock response]")

@@ -82,15 +82,6 @@ class ConversationState:
         """Lấy n lượt hội thoại gần nhất."""
         return self.history[-(n_turns * 2):]
 
-    def get_history_text(self, n_turns: int = 3) -> str:
-        """Lịch sử hội thoại dạng text để đưa vào prompt."""
-        recent = self.get_recent_history(n_turns)
-        lines  = []
-        for msg in recent:
-            role   = "Người dùng" if msg["role"] == "user" else "Trợ lý"
-            lines.append(f"{role}: {msg['content']}")
-        return "\n".join(lines)
-
     # ── Stage helpers ─────────────────────────────────────────────────────────
 
     def update_stage(self, intent: str) -> None:
@@ -101,12 +92,14 @@ class ConversationState:
 
         if intent == "greeting" and self.turn_count == 0:
             self.stage = STAGE_GREETING
-        elif intent in ("car_advice", "car_info", "budget_filter",
+        elif intent in ("car_advice", "budget_filter",
                         "seat_filter", "usage_filter"):
             if self.has_enough_info():
                 self.stage = STAGE_ADVISING
             else:
                 self.stage = STAGE_COLLECTING
+        elif intent == "car_info":
+            self.stage = STAGE_ADVISING
 
     def is_expired(self) -> bool:
         return (time.time() - self.updated_at) > SESSION_TTL_SECS
@@ -189,25 +182,3 @@ class ConversationStateManager:
 
 # Singleton dùng chung toàn app
 state_manager = ConversationStateManager()
-
-
-# ── Test ──────────────────────────────────────────────────────────────────────
-if __name__ == "__main__":
-    from slot_extractor import extract_slots
-
-    mgr     = ConversationStateManager()
-    state   = mgr.create("test-session-001")
-
-    queries = [
-        ("Xin chào!", "greeting"),
-        ("Tôi muốn mua xe 7 chỗ khoảng 1 tỷ", "car_advice"),
-        ("Chủ yếu đi trong thành phố", "usage_filter"),
-        ("Tôi thích xe chạy xăng", "car_info"),
-    ]
-
-    for user_msg, intent in queries:
-        slots = extract_slots(user_msg)
-        state.update_slots(slots)
-        state.update_stage(intent)
-        state.add_turn(user_msg, "[assistant response placeholder]")
-        print(f"Turn {state.turn_count}: {state.summary()}\n")

@@ -6,6 +6,11 @@ import re
 
 
 CONTENT_HASH_LENGTH = 12
+MIN_CHUNK_LENGTH = 50
+TECHNICAL_SHORT_PATTERN = re.compile(
+    r"(\d|:|/100km|lít|lit|mm|cm|m\b|kw|hp|nm|cc|sao|túi khí|tui khi|hybrid|4x4|awd)",
+    re.IGNORECASE,
+)
 
 
 def clean_text(text: str) -> str:
@@ -49,6 +54,71 @@ def _stable_chunk_id(
     )
 
 
+def _has_indexable_short_content(text: str) -> bool:
+    return TECHNICAL_SHORT_PATTERN.search(text) is not None
+
+
+def _make_chunk(
+    chunk_text: str,
+    metadata: Dict[str, Any],
+    source_id: str,
+    page: Any,
+    chunk_index: int,
+    start: int,
+    end: int,
+) -> Dict[str, Any]:
+    content_hash = _content_hash(chunk_text)
+    chunk_id = _stable_chunk_id(
+        source_id,
+        page,
+        chunk_index,
+        start,
+        content_hash,
+    )
+    return {
+        "chunk_id": chunk_id,
+        "content": chunk_text,
+        "metadata": {
+            **metadata,
+            "chunk_id": chunk_id,
+            "source_id": source_id,
+            "chunk_index": chunk_index,
+            "char_start": start,
+            "char_end": end,
+            "content_hash": content_hash,
+        },
+    }
+
+
+def _same_source_page(chunk: Dict[str, Any], source_id: str, page: Any) -> bool:
+    metadata = chunk.get("metadata", {})
+    return metadata.get("source_id") == source_id and metadata.get("page") == page
+
+
+def _merge_short_chunk(
+    chunk: Dict[str, Any],
+    chunk_text: str,
+    source_id: str,
+    page: Any,
+    end: int,
+) -> None:
+    metadata = chunk["metadata"]
+    merged_text = f"{chunk['content']}\n{chunk_text}".strip()
+    content_hash = _content_hash(merged_text)
+    chunk_id = _stable_chunk_id(
+        source_id,
+        page,
+        metadata["chunk_index"],
+        metadata["char_start"],
+        content_hash,
+    )
+    chunk["chunk_id"] = chunk_id
+    chunk["content"] = merged_text
+    metadata["chunk_id"] = chunk_id
+    metadata["char_end"] = end
+    metadata["content_hash"] = content_hash
+
+
 def chunk_documents(
     documents: List[Dict[str, Any]],
     chunk_size: int = 800,
@@ -68,8 +138,9 @@ def chunk_documents(
             continue
 
         metadata = doc.get("metadata", {})
-        source = metadata.get("source", "unknown")
-        source_id = _stable_source_id(source)
+        source_id = metadata.get("source_id") or _stable_source_id(
+            metadata.get("source_path") or metadata.get("source", "unknown")
+        )
         page = metadata.get("page", 0)
         chunk_index = 0
 
@@ -91,54 +162,47 @@ def chunk_documents(
 
             chunk_text = text[start:end].strip()
 
-            if len(chunk_text) > 50:
-                content_hash = _content_hash(chunk_text)
-                chunk_id = _stable_chunk_id(
-                    source,
-                    page,
-                    chunk_index,
-                    start,
-                    content_hash,
+            if len(chunk_text) >= MIN_CHUNK_LENGTH or _has_indexable_short_content(chunk_text):
+                chunks.append(
+                    _make_chunk(
+                        chunk_text,
+                        metadata,
+                        source_id,
+                        page,
+                        chunk_index,
+                        start,
+                        end,
+                    )
                 )
-                chunks.append({
-                    "chunk_id": chunk_id,
-                    "content": chunk_text,
-                    "metadata": {
-                        **metadata,
-                        "chunk_id": chunk_id,
-                        "source_id": source_id,
-                        "chunk_index": chunk_index,
-                        "char_start": start,
-                        "char_end": end,
-                        "content_hash": content_hash,
-                    },
-                })
                 chunk_index += 1
             elif chunk_text:
-                print(f"[WARN] Bỏ chunk ngắn ({len(chunk_text)} chars): {chunk_text[:60]!r}")
+                source = metadata.get("source", "unknown")
+                if chunks and _same_source_page(chunks[-1], source_id, page):
+                    _merge_short_chunk(chunks[-1], chunk_text, source_id, page, end)
+                    print(
+                        f"[WARN] Gộp chunk ngắn ({len(chunk_text)} chars) "
+                        f"vào chunk trước: {source} trang {page}: {chunk_text[:60]!r}"
+                    )
+                else:
+                    chunks.append(
+                        _make_chunk(
+                            chunk_text,
+                            metadata,
+                            source_id,
+                            page,
+                            chunk_index,
+                            start,
+                            end,
+                        )
+                    )
+                    chunk_index += 1
+                    print(
+                        f"[WARN] Giữ chunk ngắn ({len(chunk_text)} chars): "
+                        f"{source} trang {page}: {chunk_text[:60]!r}"
+                    )
 
             next_start = end - chunk_overlap
             start = next_start if next_start > start else start + 1
 
     print(f"[INFO] Tạo được {len(chunks)} chunks từ {len(documents)} trang")
     return chunks
-
-
-# ── Chạy trực tiếp để test ───────────────────────────────────────────────────
-if __name__ == "__main__":
-    from data_processing.extract_pdf import extract_multiple_pdfs  # ← đổi ở đây
-
-    # Tự động đọc toàn bộ documents/, chỉ xử lý file mới
-    docs = extract_multiple_pdfs()
-
-    if not docs:
-        print("[INFO] Không có tài liệu mới để chunk.")
-    else:
-        chunks = chunk_documents(docs, chunk_size=800, chunk_overlap=150)
-
-        print("\n--- 3 chunks đầu tiên ---")
-        for c in chunks[:3]:
-            print(f"🧩 {c['chunk_id']} | {c['metadata']['source']} "
-                  f"| Page {c['metadata']['page']} | {len(c['content'])} chars")
-            print(f"   {c['content'][:120]}...")
-            print("-" * 80)

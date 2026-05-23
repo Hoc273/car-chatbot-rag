@@ -3,12 +3,16 @@
 import hashlib
 import json
 from pathlib import Path
+import re
 from typing import Union
+import unicodedata
 
 import fitz
 
 
-PROCESSED_REGISTRY = Path(__file__).resolve().parent.parent / ".processed_pdfs.json"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DOCUMENTS_DIR = PROJECT_ROOT / "documents"
+PROCESSED_REGISTRY = PROJECT_ROOT / ".processed_pdfs.json"
 
 
 def _get_file_hash(path: Path) -> str:
@@ -40,6 +44,34 @@ def _save_registry(registry: dict) -> None:
     )
 
 
+def _source_key(pdf_file: Path) -> str:
+    """Return a location-stable key for a PDF, preferring project-relative path."""
+    resolved = pdf_file.resolve()
+    try:
+        return resolved.relative_to(PROJECT_ROOT).as_posix()
+    except ValueError:
+        return resolved.as_posix()
+
+
+def _slugify_source_key(source_key: str) -> str:
+    ascii_text = (
+        unicodedata.normalize("NFKD", source_key)
+        .encode("ascii", "ignore")
+        .decode("ascii")
+    )
+    slug = ascii_text.strip().lower()
+    slug = re.sub(r"[\\/]+", "/", slug)
+    slug = re.sub(r"\s+", "-", slug)
+    slug = re.sub(r"[^a-z0-9._/-]+", "-", slug)
+    slug = re.sub(r"-{2,}", "-", slug).strip("-/")
+    digest = hashlib.sha1(source_key.encode("utf-8")).hexdigest()[:10]
+    return f"{slug or 'pdf'}__{digest}"
+
+
+def _source_id(pdf_file: Path) -> str:
+    return _slugify_source_key(_source_key(pdf_file))
+
+
 def _resolve_pdf_paths(
     pdf_paths: Union[list[str], str] = None,
     use_documents_folder: bool = True,
@@ -47,8 +79,7 @@ def _resolve_pdf_paths(
 ) -> list[Path]:
     """Resolve PDF files from explicit paths or the default documents folder."""
     if pdf_paths is None and use_documents_folder:
-        project_root = Path(__file__).resolve().parent.parent
-        pdf_paths = str(project_root / "documents")
+        pdf_paths = str(DOCUMENTS_DIR)
 
     if isinstance(pdf_paths, str):
         pdf_paths = [pdf_paths]
@@ -84,8 +115,32 @@ def _update_registry_entry(registry: dict, pdf_file: Path, file_hash: str) -> No
     }
 
 
-def extract_pdf_with_metadata(pdf_path: str) -> list[dict]:
+def mark_documents_processed(documents: list[dict]) -> None:
+    """Commit processed PDFs to the runtime cache after indexing succeeds."""
+    registry = _load_registry()
+    processed_files = {}
+
+    for doc in documents:
+        metadata = doc.get("metadata", {})
+        source_path = metadata.get("source_path")
+        source_hash = metadata.get("source_hash")
+        if source_path:
+            processed_files[source_path] = source_hash
+
+    for source_path, source_hash in processed_files.items():
+        pdf_file = Path(source_path)
+        file_hash = source_hash or _get_file_hash(pdf_file)
+        _update_registry_entry(registry, pdf_file, file_hash)
+
+    _save_registry(registry)
+    print(f"[INFO] Da cap nhat registry cho {len(processed_files)} PDF.")
+
+
+def extract_pdf_with_metadata(pdf_path: str, file_hash: str = None) -> list[dict]:
     pdf_file = Path(pdf_path)
+    source_key = _source_key(pdf_file)
+    source_id = _source_id(pdf_file)
+    file_hash = file_hash or _get_file_hash(pdf_file)
     doc = fitz.open(str(pdf_file))
     documents = []
 
@@ -105,6 +160,9 @@ def extract_pdf_with_metadata(pdf_path: str) -> list[dict]:
                 "metadata": {
                     "source": pdf_file.name,
                     "source_path": str(pdf_file.resolve()),
+                    "source_key": source_key,
+                    "source_id": source_id,
+                    "source_hash": file_hash,
                     "page": page_num + 1,
                     "total_pages": len(doc),
                 },
@@ -131,7 +189,6 @@ def extract_all_pdfs(
     if not pdf_files:
         return []
 
-    registry = _load_registry() if update_registry else {}
     all_documents = []
 
     for pdf_file in pdf_files:
@@ -140,15 +197,12 @@ def extract_all_pdfs(
             docs = extract_pdf_with_metadata(str(pdf_file))
             all_documents.extend(docs)
 
-            if update_registry:
-                _update_registry_entry(registry, pdf_file, _get_file_hash(pdf_file))
-
             print(f"       -> {len(docs)} trang")
         except Exception as e:
             print(f"[ERROR] Loi khi doc {pdf_file.name}: {e}")
 
     if update_registry:
-        _save_registry(registry)
+        print("[WARN] update_registry bi bo qua khi doc PDF; registry chi cap nhat sau khi index thanh cong.")
 
     print(
         f"\n[INFO] Hoan thanh doc toan bo: "
@@ -213,14 +267,12 @@ def extract_multiple_pdfs(
         label = "(moi)" if key not in registry else "(da thay doi noi dung)"
         print(f"[INFO] Dang xu ly {label}: {pdf_file.name}")
         try:
-            docs = extract_pdf_with_metadata(str(pdf_file))
+            docs = extract_pdf_with_metadata(str(pdf_file), file_hash=file_hash)
             all_documents.extend(docs)
-            _update_registry_entry(registry, pdf_file, file_hash)
             print(f"       -> {len(docs)} trang")
         except Exception as e:
             print(f"[ERROR] Loi khi doc {pdf_file.name}: {e}")
 
-    _save_registry(registry)
     print(
         f"\n[INFO] Hoan thanh incremental: "
         f"{len(new_files)} file | {len(all_documents)} trang."

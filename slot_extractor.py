@@ -24,6 +24,30 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL   = "llama-3.3-70b-versatile"
 groq_client  = Groq(api_key=GROQ_API_KEY)
 
+SLOT_EXTRACTION_ENABLED = os.getenv("ENABLE_SLOT_EXTRACTION", "true").lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
+}
+SLOT_EXTRACTION_INTENTS = {
+    intent.strip()
+    for intent in os.getenv(
+        "SLOT_EXTRACTION_INTENTS",
+        "car_advice,budget_filter,seat_filter,usage_filter",
+    ).split(",")
+    if intent.strip()
+}
+IMPLICIT_SLOT_OVERRIDE_ENABLED = os.getenv(
+    "ENABLE_IMPLICIT_SLOT_OVERRIDE",
+    "true",
+).lower() in {"1", "true", "yes", "on"}
+
+
+def should_extract_slots(intent: str) -> bool:
+    """Return True when slot extraction should run for this intent."""
+    return SLOT_EXTRACTION_ENABLED and intent in SLOT_EXTRACTION_INTENTS
+
 # ── Định nghĩa slots ──────────────────────────────────────────────────────────
 
 SLOT_SCHEMA = {
@@ -99,6 +123,11 @@ Quy tắc:
 - Nếu không tìm thấy thông tin cho slot nào → để null
 - Chỉ trả về JSON, không giải thích thêm
 - Không được suy đoán nếu không có thông tin rõ ràng
+- Chỉ điền slot khi người dùng nói rõ slot đó hoặc dùng từ đồng nghĩa trực tiếp.
+- Không được tự suy ra "gia đình" chỉ vì người dùng nói "đi du lịch" hoặc "mang nhiều đồ".
+- Không được tự suy ra "SUV" chỉ vì người dùng nói "đi du lịch", "gầm cao", "rộng" hoặc "mang nhiều đồ".
+- Không được tự suy ra "đường dài" chỉ vì người dùng nói "đi du lịch"; chỉ điền khi có từ như "đường dài", "cao tốc", "liên tỉnh", "đường trường".
+- Các nhu cầu mô tả chung như "mang nhiều đồ", "cốp rộng", "chở hành lý" chưa thuộc slot nào trong schema → để các slot không liên quan là null.
 
 Định dạng trả về:
 {
@@ -149,7 +178,7 @@ def _regex_extract_fuel(text: str) -> Optional[str]:
 def _regex_extract_region(text: str) -> Optional[str]:
     t = text.lower()
     if any(k in t for k in ["off-road", "địa hình", "núi", "rừng", "đường xấu"]): return "địa hình"
-    if any(k in t for k in ["đường dài", "cao tốc", "liên tỉnh", "du lịch"]):      return "đường dài"
+    if any(k in t for k in ["đường dài", "cao tốc", "liên tỉnh", "đường trường"]): return "đường dài"
     if any(k in t for k in ["thành phố", "nội thành", "phố", "đô thị"]):           return "thành phố"
     return None
 
@@ -219,6 +248,13 @@ def extract_slots(text: str) -> Dict[str, Any]:
         if slots["seats"] is not None:
             slots["seats"] = int(slots["seats"])
 
+        if slots["seats"] is not None and _mentions_people_count_without_seat(text):
+            slots["seats"] = None
+            slots["overrides"] = [
+                key for key in slots["overrides"] if key != "seats"
+            ]
+        slots = _drop_inferred_slots_without_evidence(text, slots)
+
         return slots
 
     except Exception as e:
@@ -227,9 +263,24 @@ def extract_slots(text: str) -> Dict[str, Any]:
 
 
 def merge_slots(existing: Dict[str, Any], new: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge newly extracted slots into state.
+
+    In a consulting conversation, a short follow-up such as "xe 5 cho thi sao"
+    usually means "change the seat filter to 5", even if the extractor did not
+    explicitly mark it as an override. We only apply that implicit override when
+    exactly one slot is present in the new turn to avoid clobbering broader
+    preferences by accident.
+    """
     merged    = dict(existing)
-    overrides = new.get("overrides", []) or []
-    clears    = new.get("clears",    []) or []
+    overrides = [
+        key for key in (new.get("overrides", []) or [])
+        if key in SLOT_SCHEMA
+    ]
+    clears = [
+        key for key in (new.get("clears", []) or [])
+        if key in SLOT_SCHEMA
+    ]
+    overrides = [key for key in overrides if key not in clears]
 
     # Bước 1: xoá slot user không cần nữa
     for key in clears:
@@ -239,7 +290,11 @@ def merge_slots(existing: Dict[str, Any], new: Dict[str, Any]) -> Dict[str, Any]
     # Bước 2: nếu chỉ có đúng 1 slot được extract và không có slot nào khác
     # → coi như user đang chỉnh slot đó (implicit override)
     filled_new = [k for k in SLOT_SCHEMA if new.get(k) is not None]
-    if len(filled_new) == 1 and filled_new[0] not in overrides:
+    if (
+        IMPLICIT_SLOT_OVERRIDE_ENABLED
+        and len(filled_new) == 1
+        and filled_new[0] not in overrides
+    ):
         overrides = overrides + filled_new  # ← tự động override slot duy nhất
 
     # Bước 3: merge slot mới
@@ -252,59 +307,67 @@ def merge_slots(existing: Dict[str, Any], new: Dict[str, Any]) -> Dict[str, Any]
 
     return merged
 
+
+def _mentions_people_count_without_seat(text: str) -> bool:
+    t = text.lower()
+    has_people_count = (
+        re.search(r"\d+\s*(?:ng\u01b0\u1eddi|th\u00e0nh vi\u00ean)", t)
+        is not None
+    )
+    seat_words = [
+        "ch\u1ed7",
+        "gh\u1ebf",
+        "ng\u1ed3i",
+        "seat",
+    ]
+    has_seat_word = any(k in t for k in seat_words)
+    return has_people_count and not has_seat_word
+
+
+def _drop_inferred_slots_without_evidence(
+    text: str,
+    slots: Dict[str, Any],
+) -> Dict[str, Any]:
+    cleaned = dict(slots)
+    for key in ("purpose", "region", "type_car"):
+        value = cleaned.get(key)
+        if value is not None and not _has_slot_evidence(text, key, str(value)):
+            cleaned[key] = None
+            cleaned["overrides"] = [
+                item for item in cleaned.get("overrides", []) if item != key
+            ]
+    return cleaned
+
+
+def _has_slot_evidence(text: str, key: str, value: str) -> bool:
+    t = text.lower()
+    v = value.lower()
+    evidence = {
+        "purpose": {
+            "gia đình": ["gia đình", "nhà tôi", "vợ", "chồng", "con", "bố mẹ", "ba mẹ"],
+            "kinh doanh": ["kinh doanh", "doanh nghiệp", "công ty", "buôn bán"],
+            "cá nhân": ["cá nhân", "một mình", "đi làm", "riêng tôi"],
+            "off-road": ["off-road", "leo núi", "địa hình", "đường xấu", "đồi núi", "rừng"],
+            "chạy dịch vụ": ["chạy dịch vụ", "dịch vụ", "taxi", "grab", "be", "chở khách"],
+            "hỗn hợp": ["hỗn hợp", "nhiều mục đích", "đa mục đích", "vừa"],
+        },
+        "region": {
+            "thành phố": ["thành phố", "nội thành", "đô thị", "trong phố"],
+            "đường dài": ["đường dài", "cao tốc", "liên tỉnh", "đường trường"],
+            "địa hình": ["địa hình", "off-road", "leo núi", "đường xấu", "đồi núi", "rừng"],
+            "hỗn hợp": ["hỗn hợp", "nhiều địa hình", "nhiều cung đường", "đa địa hình"],
+        },
+        "type_car": {
+            "sedan": ["sedan"],
+            "suv": ["suv", "xe thể thao đa dụng"],
+            "đa dụng": ["đa dụng", "mpv"],
+            "bán tải": ["bán tải", "pickup", "pick-up"],
+            "hatchback": ["hatchback"],
+        },
+    }
+    return any(marker in t for marker in evidence.get(key, {}).get(v, []))
+
+
 def empty_slots() -> Dict[str, Any]:
     """Trả về dict slots rỗng (tất cả None)."""
     return {key: None for key in SLOT_SCHEMA}
-
-
-def filled_slots(slots: Dict[str, Any]) -> Dict[str, Any]:
-    """Chỉ trả về các slots đã có giá trị."""
-    return {k: v for k, v in slots.items() if v is not None}
-
-
-def missing_slots(slots: Dict[str, Any]) -> list:
-    """Danh sách slot chưa có giá trị."""
-    return [k for k, v in slots.items() if v is None]
-
-
-# ── Test ──────────────────────────────────────────────────────────────────────
-if __name__ == "__main__":
-    # Test extract
-    tests = [
-        "Tôi muốn mua xe 7 chỗ, ngân sách khoảng 1 tỷ 2, chủ yếu đi trong thành phố",
-        "Thôi cho tôi xe 4 chỗ thôi",
-        "Đổi ngân sách thành 900 triệu",
-        "Tôi muốn xe xăng thay vì hybrid",
-        "Không cần xe 7 chỗ nữa",
-        "Thôi không cần hybrid, bỏ luôn yêu cầu địa hình",
-        "Không quan tâm số chỗ ngồi nữa",
-    ]
-    for q in tests:
-        slots = extract_slots(q)
-        print(f"Q: {q}")
-        print(f"→ Overrides : {slots.get('overrides', [])}")
-        print(f"→ Clears    : {slots.get('clears', [])}")
-        print(f"→ Slots     : { {k:v for k,v in slots.items() if k not in ('overrides','clears')} }\n")
-
-    # Test merge: override + clear cùng lúc
-    print("=" * 55)
-    print("Test merge_slots — override + clear:")
-    existing = {
-        "budget": 500.0, "seats": 7, "purpose": "kinh doanh",
-        "fuel": "hybrid", "region": "địa hình", "brand_preference": None,
-    }
-    new = {
-        "budget": None, "seats": 4,   "purpose": None,
-        "fuel":   None, "region": None, "brand_preference": None,
-        "overrides": ["seats"],
-        "clears":    ["fuel", "region"],
-    }
-    result = merge_slots(existing, new)
-    print(f"Before : {existing}")
-    print(f"Action : overrides={new['overrides']}, clears={new['clears']}")
-    print(f"After  : {result}")
-    assert result["seats"]  == 4,    "❌ override seats thất bại"
-    assert result["fuel"]   is None, "❌ clear fuel thất bại"
-    assert result["region"] is None, "❌ clear region thất bại"
-    assert result["budget"] == 500.0,"❌ budget bị thay đổi nhầm"
-    print("✅ Tất cả assertions passed")
